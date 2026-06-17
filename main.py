@@ -1,25 +1,31 @@
+"""
+Alphamini Project – Respiratory Monitor
+Press ESC or Q in the window to stop.
+"""
 import logging
-from base import RespiratoryMonitor
+from base import RespiratoryMonitor, RespiratoryAnalyzer
 
+logging.basicConfig(
+    format="%(asctime)s :: %(levelname)s :: %(message)s",
+    level=logging.INFO)
 
 if __name__ == "__main__":
-    logging.basicConfig(format="%(asctime)s :: %(message)s", level=logging.INFO)
+    print("=" * 55)
+    print("  Alphamini Respiratory Monitor")
+    print("  Press ESC or Q in the window to stop")
+    print("=" * 55 + "\n")
 
-    data_path = r"C:\Users\kevin\Desktop\Active Projects\Video Magnification Videos\\"
+    monitor = RespiratoryMonitor(
+        capture_target=0,
+        visualize='pyqtgraph',
+        fps_limit=10,
+        save_all_data=True,
+        motion_extraction_method='average'
+    )
 
-    rm = RespiratoryMonitor(capture_target=0, save_calibration_image=True, motion_extraction_method="flow")
+    monitor.run()
 
-'''
-    rm = RespiratoryMonitor(capture_target=data_path + "timber.mp4", save_calibration_image=True,
-                            motion_extraction_method="flow")
-    rm = RespiratoryMonitor(capture_target=data_path + "timber.mp4", save_calibration_image=True,
-                            motion_extraction_method="average")
-    rm = RespiratoryMonitor(capture_target=data_path + "timber2.mp4", save_calibration_image=True,
-                            motion_extraction_method="flow")
-    rm = RespiratoryMonitor(capture_target=data_path + "timber2.mp4", save_calibration_image=True,
-                            motion_extraction_method="average")
-    rm = RespiratoryMonitor(capture_target=data_path + "trooper.mp4", save_calibration_image=True,
-                            motion_extraction_method="flow")
-    rm = RespiratoryMonitor(capture_target=data_path + "trooper.mp4", save_calibration_image=True,
-                            motion_extraction_method="average")
-'''
+    print("\n[*] Session ended. Analyzing…\n")
+    analyzer = RespiratoryAnalyzer("respiratory_session_data.csv")
+    analyzer.print_report()
+    print("[+] Done. Results saved to respiratory_session_data.csv")

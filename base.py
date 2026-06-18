@@ -266,28 +266,28 @@ class RespiratoryMonitor:
             return None
         try:
             rgb    = cv2.cvtColor(self.raw_bgr, cv2.COLOR_BGR2RGB)
-            uh, uw = rgb.shape[:2]   # upright: uh=480, uw=640
+            uh, uw = rgb.shape[:2]
             result = self.pose.detect(Image(image_format=ImageFormat.SRGB, data=rgb))
 
             if not result.pose_landmarks:
                 return None
 
             lm = result.pose_landmarks[0]
-            ls = lm[11];  rs = lm[12]   # shoulders
-            lh = lm[23];  rh = lm[24]   # hips
+            ls = lm[11];  rs = lm[12]
+            lh = lm[23];  rh = lm[24]
 
             # Upright pixel coords
-            # Chest box: horizontally between shoulders, vertically from just below shoulders to hips
             left   = int(min(ls.x, rs.x) * uw)
             right  = int(max(ls.x, rs.x) * uw)
-            top    = int(((ls.y + rs.y) / 2) * uh)          # shoulder line
-            bottom = int(((lh.y + rh.y) / 2) * uh)          # hip line
+            top    = int(((ls.y + rs.y) / 2) * uh)
+            # Estimate chest bottom as 2x the shoulder width below the shoulder line
+            shoulder_width = abs(rs.x - ls.x) * uw
+            bottom = min(int(top + shoulder_width * 1.2), uh - 1)
 
-            # Push top down 20% of torso height to exclude neck/collarbone
-            torso_h = bottom - top
-            top     = top + int(torso_h * 0.20)
+            torso_h = max(1, bottom - top)
+            # Push top down 35% to get mid-chest, not shoulder/collarbone
+            top = top + int(torso_h * 0.15)
 
-            # Add horizontal margin
             margin = int((right - left) * 0.1)
             left   = max(0, left - margin)
             right  = min(uw, right + margin)
@@ -295,18 +295,17 @@ class RespiratoryMonitor:
             if right - left < 10 or bottom - top < 10:
                 return None
 
-            # Translate upright (left, top, right, bottom) → rotated 90° CW
-            # In rotated frame: rot_w = uh, rot_h = uw
-            # A point (x, y) in upright → (uh - y, x) in rotated
-            # So the box:
-            #   rot_x = uh - bottom   (right edge of upright box becomes top of rotated)
-            #   rot_y = left
-            #   rot_w = bottom - top  (upright vertical → rotated horizontal)
-            #   rot_h = right - left  (upright horizontal → rotated vertical)
+            # Rotate 90° CW: point (x,y) in upright → (uh-1-y, x) in rotated
+            # Box: top-left (left,top) → bottom-right (right,bottom) in upright
+            # In rotated frame:
             rot_x = max(0, uh - bottom)
             rot_y = max(0, left)
             rot_w = max(10, bottom - top)
             rot_h = max(10, right - left)
+
+            # Safety clamp
+            rot_x = min(rot_x, uh - rot_w)
+            rot_y = min(rot_y, uw - rot_h)
 
             logging.info(f"MediaPipe chest ROI (rotated): x={rot_x} y={rot_y} w={rot_w} h={rot_h}")
             return rot_x, rot_y, rot_w, rot_h
@@ -456,8 +455,8 @@ class RespiratoryMonitor:
 
     def measure(self):
         self.filtered_data = np.array(
-            butter_lowpass_filter(self.data, self.freq_max * 0.5,
-                                  self.fps, self.filter_order))
+            butter_lowpass_filter(self.data, self.freq_max * 0.8,
+                                self.fps, self.filter_order))
         self.peak_indices, fits = self.find_peaks()
         self.peak_times = np.take(self.t, self.peak_indices)
         diffs = [b - a for a, b in zip(self.peak_times, self.peak_times[1:])]

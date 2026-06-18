@@ -266,43 +266,43 @@ class RespiratoryMonitor:
             return None
         try:
             rgb    = cv2.cvtColor(self.raw_bgr, cv2.COLOR_BGR2RGB)
-            uh, uw = rgb.shape[:2]   # upright: uh=480, uw=640
+            uh, uw = rgb.shape[:2]
             result = self.pose.detect(Image(image_format=ImageFormat.SRGB, data=rgb))
 
             if not result.pose_landmarks:
                 return None
 
-            lm = result.pose_landmarks[0]
-            ls = lm[11];  rs = lm[12]   # shoulders
-            lh = lm[23];  rh = lm[24]   # hips
+            lm   = result.pose_landmarks[0]
+            ls   = lm[11];  rs = lm[12]
+            lh   = lm[23];  rh = lm[24]
+            nose = lm[0]
 
-            # Upright pixel coords
-            # Chest box: horizontally between shoulders, vertically from just below shoulders to hips
-            left   = int(min(ls.x, rs.x) * uw)
-            right  = int(max(ls.x, rs.x) * uw)
-            top    = int(((ls.y + rs.y) / 2) * uh)          # shoulder line
-            bottom = int(((lh.y + rh.y) / 2) * uh)          # hip line
+            # Detect which shoulder is closer to camera using nose position
+            if abs(nose.x - ls.x) < abs(nose.x - rs.x):
+                near_shoulder = ls
+            else:
+                near_shoulder = rs
 
-            # Push top down 20% of torso height to exclude neck/collarbone
-            torso_h = bottom - top
+            # Vertical: shoulder line to hip line, push top down 20%
+            top    = int(((ls.y + rs.y) / 2) * uh)
+            bottom = int(((lh.y + rh.y) / 2) * uh)
+            torso_h = max(1, bottom - top)
             top     = top + int(torso_h * 0.20)
 
-            # Add horizontal margin
-            margin = int((right - left) * 0.1)
+            # Horizontal: near shoulder to body midpoint
+            near_x = int(near_shoulder.x * uw)
+            mid_x  = int(((ls.x + rs.x) / 2) * uw)
+            left   = max(0, min(near_x, mid_x))
+            right  = min(uw, max(near_x, mid_x))
+
+            margin = int(abs(right - left) * 0.2)
             left   = max(0, left - margin)
             right  = min(uw, right + margin)
 
             if right - left < 10 or bottom - top < 10:
                 return None
 
-            # Translate upright (left, top, right, bottom) → rotated 90° CW
-            # In rotated frame: rot_w = uh, rot_h = uw
-            # A point (x, y) in upright → (uh - y, x) in rotated
-            # So the box:
-            #   rot_x = uh - bottom   (right edge of upright box becomes top of rotated)
-            #   rot_y = left
-            #   rot_w = bottom - top  (upright vertical → rotated horizontal)
-            #   rot_h = right - left  (upright horizontal → rotated vertical)
+            # Translate upright → rotated 90° CW
             rot_x = max(0, uh - bottom)
             rot_y = max(0, left)
             rot_w = max(10, bottom - top)

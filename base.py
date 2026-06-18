@@ -143,7 +143,7 @@ class RespiratoryMonitor:
     def __init__(self, capture_target=0, save_calibration_image=False,
                  visualize='pyqtgraph', fig_size=None, fps_limit=10,
                  error_reset_delay=10.0, save_all_data=True,
-                 motion_extraction_method='average'):
+                 motion_extraction_method='flow'):
 
         assert isinstance(fps_limit, (int, float)) and fps_limit > 0
         assert isinstance(save_calibration_image, bool)
@@ -235,6 +235,7 @@ class RespiratoryMonitor:
         self.display_frame          = None
         self.motion_key_points      = None
         self.video_out              = None
+        self.ui_video_out = None
         self.error_message          = None
 
         self.buffers = [self.data, self.confidence, self.t, self.freq,
@@ -286,11 +287,13 @@ class RespiratoryMonitor:
 
             torso_h = max(1, bottom - top)
             # Push top down 35% to get mid-chest, not shoulder/collarbone
-            top = top + int(torso_h * 0.15)
+            top = top + int(torso_h * 0.30)
 
-            margin = int((right - left) * 0.1)
-            left   = max(0, left - margin)
-            right  = min(uw, right + margin)
+            # Narrow the horizontal width to just the chest, not full shoulder span
+            chest_center = (left + right) // 2
+            chest_half   = int((right - left) * 0.35)  # 70% of shoulder width
+            left  = max(0, chest_center - chest_half)
+            right = min(uw, chest_center + chest_half)
 
             if right - left < 10 or bottom - top < 10:
                 return None
@@ -653,7 +656,18 @@ class RespiratoryMonitor:
                         self.maximum_bounding_box_area)
                     logging.info(f"ROI locked: x={self.x} y={self.y} "
                                  f"w={self.w} h={self.h}")
+                    
                     self.calibration_progress_bar.close()
+
+                    # ── Countdown before measurement starts ──────────────
+                    print("\n[*] Starting in...")
+                    for i in range(5, 0, -1):
+                        print(f"    {i}...")
+                        if self.visualize == 'pyqtgraph':
+                            self.set_window_title(f'Starting in {i} seconds...')
+                            QtWidgets.QApplication.processEvents()
+                        time.sleep(1)
+                    print("[+] GO!\n")
                     self.state = 'measure'
 
             elif self.state == 'measure':

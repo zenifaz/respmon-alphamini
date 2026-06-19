@@ -1,4 +1,5 @@
 import os
+from unittest import result
 import cv2
 import time
 import copy
@@ -198,7 +199,7 @@ class RespiratoryMonitor:
         self.lk_params = dict(winSize=(15, 15), maxLevel=2,
                               criteria=(cv2.TERM_CRITERIA_EPS |
                                         cv2.TERM_CRITERIA_COUNT, 10, 0.03))
-        self.gaussian_cutoff               = 30.0
+        self.gaussian_cutoff               = 20.0
         self.filter_order                  = 3
         self.peak_minimum_sample_distance  = 0
         self.measure_initialization_length = 12
@@ -477,6 +478,7 @@ class RespiratoryMonitor:
         indices = peakutils.indexes(self.filtered_data, min_dist=width)
         final_idxs = []
         fits       = []
+        
         for idx in indices:
             w = width
             if idx - width < 0:
@@ -495,6 +497,16 @@ class RespiratoryMonitor:
                     final_idxs.append(idx)
             except RuntimeError:
                 pass
+        
+        # NEW: Filter out peaks that are too close together (< 0.5 sec = false positives)
+        if len(final_idxs) > 1:
+            filtered_idxs = [final_idxs[0]]
+            for idx in final_idxs[1:]:
+                time_since_last = self.t[idx] - self.t[filtered_idxs[-1]]
+                if time_since_last > 0.5:  # Real breaths are >0.5 sec apart
+                    filtered_idxs.append(idx)
+            return filtered_idxs, fits
+        
         return final_idxs, fits
 
     def find_valleys(self):
@@ -576,6 +588,7 @@ class RespiratoryMonitor:
             sort_idx = np.argsort(eig_vals)[::-1]
             evec1, _ = eig_vecs[:, sort_idx]
             return np.array(self.motion_data).dot(evec1)[-1]
+            return -result
         return 0.0
 
     # ── Calibration ───────────────────────────────────────────────

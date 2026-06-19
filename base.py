@@ -198,7 +198,7 @@ class RespiratoryMonitor:
         self.lk_params = dict(winSize=(15, 15), maxLevel=2,
                               criteria=(cv2.TERM_CRITERIA_EPS |
                                         cv2.TERM_CRITERIA_COUNT, 10, 0.03))
-        self.gaussian_cutoff               = 10.0
+        self.gaussian_cutoff               = 30.0
         self.filter_order                  = 3
         self.peak_minimum_sample_distance  = 0
         self.measure_initialization_length = 12
@@ -338,7 +338,9 @@ class RespiratoryMonitor:
         lp.showGrid(x=True, y=True)
         lp.enableAutoRange('xy', False)
         raw_signal  = lp.plot(pen='y')
-        peak_plot   = lp.plot(pen=None, symbolBrush=(255, 0, 0), symbolPen=None)
+        inhale_plot = lp.plot(pen=None, symbolBrush=(0, 100, 255), symbolPen=None)  # Blue
+        exhale_plot = lp.plot(pen=None, symbolBrush=(255, 50, 50), symbolPen=None)   # Red
+
         top_ci      = lp.plot(pen='w')
         bot_ci      = lp.plot(pen='w')
         fill_ci     = pg.FillBetweenItem(top_ci, bot_ci, (255, 0, 0, 100))
@@ -366,7 +368,9 @@ class RespiratoryMonitor:
         bpm_text.setPos(0, 0)
 
         return {"raw_signal": raw_signal, "capture_image": capture_image,
-                "frequency_plot": frequency_plot, "peak_plot": peak_plot,
+                "frequency_plot": frequency_plot,
+                "inhale_plot": inhale_plot,
+                "exhale_plot": exhale_plot,
                 "bpm_text": bpm_text,
                 "top_confidence_interval": top_ci,
                 "bottom_confidence_interval": bot_ci,
@@ -410,10 +414,47 @@ class RespiratoryMonitor:
                     a, b = pt.ravel()
                     mask = cv2.circle(mask, (int(a), int(b)), 2, 255, -1)
                 self.display_frame = cv2.add(self.display_frame, mask)
-            if len(self.peak_times) > 0:
-                self.ui["peak_plot"].setData(
-                    self.peak_times,
-                    np.take(self.filtered_data, self.peak_indices))
+            
+            # Plot peaks and valleys with validation
+            if len(self.peak_times) > 0 and len(self.filtered_data) > self.measure_initialization_length:
+                valley_indices, valley_times = self.find_valleys()
+                
+                if len(valley_indices) > 0 and len(self.peak_indices) > 0:
+                    peaks_correct, valleys_correct = self.validate_peak_valley_order(
+                        self.peak_indices, valley_indices)
+                    
+                    peak_values = np.take(self.filtered_data, self.peak_indices)
+                    
+                    # If validation passes, plot normally
+                    if peaks_correct and valleys_correct:
+                        # RED = peaks (exhale starts)
+                        self.ui["exhale_plot"].setData(
+                            self.peak_times,
+                            peak_values,
+                            pen=None, symbolBrush=(255, 50, 50), symbolPen=None, symbolSize=8)
+                        
+                        # BLUE = valleys (inhale starts)
+                        if len(valley_times) > 0:
+                            valley_values = np.take(self.filtered_data, valley_indices)
+                            self.ui["inhale_plot"].setData(
+                                valley_times,
+                                valley_values,
+                                pen=None, symbolBrush=(0, 100, 255), symbolPen=None, symbolSize=8)
+                    else:
+                        # SWAP if order is wrong
+                        logging.warning("Peak/valley order reversed - swapping colors")
+                        self.ui["inhale_plot"].setData(
+                            self.peak_times,
+                            peak_values,
+                            pen=None, symbolBrush=(0, 100, 255), symbolPen=None, symbolSize=8)
+                        
+                        if len(valley_times) > 0:
+                            valley_values = np.take(self.filtered_data, valley_indices)
+                            self.ui["exhale_plot"].setData(
+                                valley_times,
+                                valley_values,
+                                pen=None, symbolBrush=(255, 50, 50), symbolPen=None, symbolSize=8)
+            
             self.set_window_title('Measuring' + '.' * (len(self.filtered_data) % 4))
             if len(self.filtered_data) >= 2 and len(self.t) >= 2:
                 self.set_plot_x_range(min(self.t), max(self.t))
@@ -455,6 +496,36 @@ class RespiratoryMonitor:
             except RuntimeError:
                 pass
         return final_idxs, fits
+
+    def find_valleys(self):
+        """Find local minima (valleys) in the filtered signal - start of inhalation"""
+        if len(self.filtered_data) < 2:
+            return [], []
+        inverted = -np.array(self.filtered_data)
+        width = self.peak_minimum_sample_distance
+        valley_indices = peakutils.indexes(inverted, min_dist=width)
+        valley_times = np.take(self.t, valley_indices)
+        return valley_indices, valley_times
+
+    def validate_peak_valley_order(self, peak_indices, valley_indices):
+        """
+        Ensure peaks and valleys are correctly identified.
+        Returns: (peaks_are_maxima, valleys_are_minima) - True if correct
+        """
+        if len(peak_indices) < 1 or len(valley_indices) < 1:
+            return True, True
+        
+        first_peak_idx = peak_indices[0]
+        first_valley_idx = valley_indices[0]
+        
+        first_peak_val = self.filtered_data[first_peak_idx]
+        first_valley_val = self.filtered_data[first_valley_idx]
+        
+        # Valleys should be minima (lower values) and peaks should be maxima (higher)
+        valleys_are_minima = first_valley_val < first_peak_val
+        peaks_are_maxima = first_peak_val > first_valley_val
+        
+        return peaks_are_maxima, valleys_are_minima
 
     def measure(self):
         self.filtered_data = np.array(
@@ -569,7 +640,8 @@ class RespiratoryMonitor:
             b.clear()
         self.ui["raw_signal"].clear()
         self.ui["frequency_plot"].clear()
-        self.ui["peak_plot"].clear()
+        self.ui["inhale_plot"].clear()
+        self.ui["exhale_plot"].clear()
         self.ui["bpm_text"].setText("??? BPM")
         self.ui["top_confidence_interval"].clear()
         self.ui["bottom_confidence_interval"].clear()
@@ -758,4 +830,3 @@ class RespiratoryMonitor:
             cv2.imwrite(f"calibration{i}.png", drawn)
 
         return x, y, w, h
-    
